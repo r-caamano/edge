@@ -37,6 +37,9 @@ import (
 	"golang.org/x/sys/unix"
 	"net"
 	"syscall"
+	"os/exec"
+        "strings"
+        "strconv"
 )
 
 // https://github.com/torvalds/linux/blob/master/Documentation/networking/tproxy.txt
@@ -477,10 +480,30 @@ func (self *tProxy) addInterceptAddr(interceptAddr *intercept.InterceptAddress, 
 		fmt.Sprintf("--on-ip=%s", port.GetIP().String()),
 		fmt.Sprintf("--on-port=%d", port.GetPort()),
 	}
-
-	pfxlog.Logger().Infof("Adding rule iptables -t %v -A %v %v", mangleTable, dstChain, interceptAddr.TproxySpec)
-	if err := self.interceptor.ipt.Insert(mangleTable, dstChain, 1, interceptAddr.TproxySpec...); err != nil {
+        if (interceptAddr.Proto() == "udp") && (interceptAddr.LowPort() == 5060) && (interceptAddr.HighPort() == 5060){ 
+	   pfxlog.Logger().Infof("dst_ip=%v",ipNet.String())
+           pfxlog.Logger().Infof("protocol=%v",interceptAddr.Proto())
+           pfxlog.Logger().Infof("low port=%v, highport=%v",interceptAddr.LowPort(),interceptAddr.HighPort())
+           pfxlog.Logger().Infof("tproxy_ip=%v",port.GetIP().String())
+           pfxlog.Logger().Infof("tproxy_port=%v",port.GetPort())
+           ipNetList := strings.Split(ipNet.String(),"/")
+           pfxlog.Logger().Infof("dst_prefix=%v",ipNetList[0])
+           dst_port := strconv.Itoa(int(interceptAddr.LowPort()))
+           src_port := strconv.Itoa(int(interceptAddr.LowPort()))
+           tproxy_port := strconv.Itoa(int(port.GetPort()))
+           cmd := exec.Command("map_update", ipNetList[0], ipNetList[1], dst_port, src_port, tproxy_port)
+           out, err := cmd.CombinedOutput()
+           if err != nil {
+              pfxlog.Logger().Infof("Failed to insert entry to ebpf hash table for %v",ipNet.String())
+           }else{
+              pfxlog.Logger().Infof("Updated ebpf zt_tproxy_map: map_update %v %v %v %v %v", ipNetList[0], ipNetList[1], dst_port, src_port, tproxy_port)
+           }
+           fmt.Printf("%s\n", out)
+        }else{
+	   pfxlog.Logger().Infof("Adding rule iptables -t %v -A %v %v", mangleTable, dstChain, interceptAddr.TproxySpec)
+	   if err := self.interceptor.ipt.Insert(mangleTable, dstChain, 1, interceptAddr.TproxySpec...); err != nil {
 		return errors.Wrap(err, "failed to insert rule")
+	   }
 	}
 
 	if self.interceptor.lanIf != "" {
@@ -507,18 +530,31 @@ func (self *tProxy) StopIntercepting(tracker intercept.AddressTracker) error {
 	log := pfxlog.Logger().WithField("sevice", self.service.Name)
 
 	for _, addr := range self.addresses {
-		log := log.WithField("route", addr.IpNet())
-		log.Infof("removing intercepted low-port: %v, high-port: %v", addr.LowPort(), addr.HighPort())
+		if (addr.Proto() == "udp") && (addr.LowPort() == 5060) && (addr.HighPort() == 5060){
+			ipNetList := strings.Split(addr.IpNet().String(),"/")
+			log.Infof("removing service entry from ebpf zt_tproxy_map: dst_prefix: %v low-port: %v, high-port: %v",addr.IpNet().String(), addr.LowPort(), addr.HighPort())
+			cmd := exec.Command("map_delete_elem", ipNetList[0])
+                        out, err := cmd.CombinedOutput()
+                        if err != nil {
+				pfxlog.Logger().Infof("Failed to remove entry from ebpf hash table for %v port:",addr.IpNet().String(), addr.LowPort())
+                        }else{
+                                pfxlog.Logger().Infof("Updated ebpf zt_tproxy_map: map_delete_elem %v", ipNetList[0])
+                        }
+			pfxlog.Logger().Infof("%v\n", out)
+		}else{
+		        log := log.WithField("route", addr.IpNet())
+		        log.Infof("removing intercepted low-port: %v, high-port: %v", addr.LowPort(), addr.HighPort())
 
-		log.Infof("Removing rule iptables -t %v -A %v %v", mangleTable, dstChain, addr.TproxySpec)
-		err := self.interceptor.ipt.Delete(mangleTable, dstChain, addr.TproxySpec...)
-		if err != nil {
-			errorList = append(errorList, err)
-			log.WithError(err).Errorf("failed to remove iptables rule for service %s", self.service.Name)
-		}
+		        log.Infof("Removing rule iptables -t %v -A %v %v", mangleTable, dstChain, addr.TproxySpec)
+		        err := self.interceptor.ipt.Delete(mangleTable, dstChain, addr.TproxySpec...)
+		        if err != nil {
+			        errorList = append(errorList, err)
+			        log.WithError(err).Errorf("failed to remove iptables rule for service %s", self.service.Name)
+		        }
+	        }
 		if self.interceptor.lanIf != "" {
 			pfxlog.Logger().Infof("Removing rule iptables -t %v -A %v %v", filterTable, dstChain, addr.TproxySpec)
-			err = self.interceptor.ipt.Delete(filterTable, dstChain, addr.AcceptSpec...)
+			err := self.interceptor.ipt.Delete(filterTable, dstChain, addr.AcceptSpec...)
 			if err != nil {
 				errorList = append(errorList, err)
 				log.WithError(err).Errorf("failed to remove iptables rule for service %s", self.service.Name)
