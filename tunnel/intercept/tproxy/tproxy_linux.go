@@ -533,7 +533,7 @@ func (self *tProxy) StopIntercepting(tracker intercept.AddressTracker) error {
 		if (addr.Proto() == "udp") && (addr.LowPort() == 5060) && (addr.HighPort() == 5060){
 			ipNetList := strings.Split(addr.IpNet().String(),"/")
 			log.Infof("removing service entry from ebpf zt_tproxy_map: dst_prefix: %v low-port: %v, high-port: %v",addr.IpNet().String(), addr.LowPort(), addr.HighPort())
-			cmd := exec.Command("map_delete_elem", ipNetList[0])
+			cmd := exec.Command("map_delete_elem", ipNetList[0], ipNetList[1])
                         out, err := cmd.CombinedOutput()
                         if err != nil {
 				pfxlog.Logger().Infof("Failed to remove entry from ebpf hash table for %v port:",addr.IpNet().String(), addr.LowPort())
