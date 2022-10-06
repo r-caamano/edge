@@ -496,7 +496,7 @@ func (self *tProxy) addInterceptAddr(interceptAddr *intercept.InterceptAddress, 
            if err != nil {
               pfxlog.Logger().Infof("Failed to insert entry to ebpf hash table for %v",ipNet.String())
            }else{
-              pfxlog.Logger().Infof("Updated ebpf zt_tproxy_map: map_update %v %v %v %v %v %v", ipNetList[1], ipNetList[1], low_port, high_port, tproxy_port, "17")
+              pfxlog.Logger().Infof("Updated ebpf zt_tproxy_map: map_update %v %v %v %v %v %v", ipNetList[0], ipNetList[1], low_port, high_port, tproxy_port, "17")
            }
            fmt.Printf("%s\n", out)
         }else{
@@ -550,10 +550,10 @@ func (self *tProxy) StopIntercepting(tracker intercept.AddressTracker) error {
 	log := pfxlog.Logger().WithField("sevice", self.service.Name)
 
 	for _, addr := range self.addresses {
-		if ((addr.Proto() == "udp") || addr.Proto() == "tcp"){
+		if (addr.Proto() == "udp"){
 			ipNetList := strings.Split(addr.IpNet().String(),"/")
-			log.Infof("removing service entry from ebpf zt_tproxy_map: dst_prefix: %v low-port: %v, high-port: %v",addr.IpNet().String(), addr.LowPort(), addr.HighPort())
-			cmd := exec.Command("map_delete_elem", ipNetList[0], ipNetList[1])
+			log.Infof("removing service entry from ebpf zt_tproxy_map: dst_prefix: %v dest mask: %v low-port: %v, high-port: %v",ipNetList[0],ipNetList[1], addr.LowPort(), addr.HighPort())
+			cmd := exec.Command("map_delete_elem", ipNetList[0], ipNetList[1], strconv.Itoa(int(addr.LowPort())),"17")  
                         out, err := cmd.CombinedOutput()
                         if err != nil {
 				pfxlog.Logger().Infof("Failed to remove entry from ebpf hash table for %v port:",addr.IpNet().String(), addr.LowPort())
@@ -561,7 +561,19 @@ func (self *tProxy) StopIntercepting(tracker intercept.AddressTracker) error {
                                 pfxlog.Logger().Infof("Updated ebpf zt_tproxy_map: map_delete_elem %v", ipNetList[0])
                         }
 			pfxlog.Logger().Infof("%v\n", out)
-		}else{
+		}else if( addr.Proto() == "tcp"){
+		        ipNetList := strings.Split(addr.IpNet().String(),"/")
+                        log.Infof("removing service entry from ebpf zt_tproxy_map: dst_prefix: %v dest mask: %v low-port: %v, high-port: %v",ipNetList[0],ipNetList[1], addr.LowPort(), addr.HighPort())
+                        cmd := exec.Command("map_delete_elem", ipNetList[0], ipNetList[1], strconv.Itoa(int(addr.LowPort())),"6" )
+                        out, err := cmd.CombinedOutput()
+                        if err != nil {
+                                pfxlog.Logger().Infof("Failed to remove entry from ebpf hash table for %v port:",addr.IpNet().String(), addr.LowPort())
+                        }else{
+                                pfxlog.Logger().Infof("Updated ebpf zt_tproxy_map: map_delete_elem %v", ipNetList[0])
+                        }
+                        pfxlog.Logger().Infof("%v\n", out)
+
+		}else{	
 		        log := log.WithField("route", addr.IpNet())
 		        log.Infof("removing intercepted low-port: %v, high-port: %v", addr.LowPort(), addr.HighPort())
 
